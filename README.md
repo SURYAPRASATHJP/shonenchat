@@ -1,6 +1,6 @@
 # ShonenChat
 
-search for shonen anime articles and answer questions and site back to the document every answer comes from
+Search for shonen anime articles and answer questions and site back to the document every answer comes from
 
 
 It will be a Chat agent for Shonen anime geeks
