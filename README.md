@@ -13,7 +13,7 @@ When you want to know facts about shonen anime, the data is available in any ani
 
 ## What it covers
 
-It will cover 27 shonen anime, with 64,495 articles, 
+It will cover 28 shonen anime, with 65,002 articles, 
 
 
 ## Status
