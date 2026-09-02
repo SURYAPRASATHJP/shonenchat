@@ -22,6 +22,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "mypy",
+    "pytest>=9.1.1",
     "ruff",
 ]
 
@@ -53,3 +54,9 @@ files = ["src"]
 # checker, and disallow_any_generics, so a bare `dict` is an error rather
 # than silently meaning `dict[Any, Any]` and switching checking off.
 strict = true
+
+[tool.pytest.ini_options]
+# Tests live in tests/ and import the package by its installed name, so
+# the run is against what ships, not a src/ path trick.
+testpaths = ["tests"]
+addopts = "-q"
