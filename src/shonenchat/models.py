@@ -50,7 +50,7 @@ class Document(BaseModel):
     Being liberal in what we accept is what stops a harmless new key
     waking anyone at 3 a.m.; the cost is that a genuinely useful new key,
     an `is_deleted` flag say, arrives and we never notice the API just
-    offered us a filter. Revisit on Day 38 with the API-page model.
+    offered us a filter. Revisit with an API-page model when a second source lands.
 
     `frozen=True` because a document is a record of what a wiki returned
     at `fetched_at`. Mutating one after the fact makes the timestamp a
@@ -83,7 +83,7 @@ class Document(BaseModel):
     # real possibility on a wiki and it is not a malformed document, it is
     # a worthless one. That is a filter question for `rejection_reason`,
     # not a validation question, and the two are different jobs.
-    # NOT IMPLEMENTED TODAY: nothing currently rejects an empty article.
+    # NOT YET: nothing currently rejects an empty article.
     wikitext: str
 
     url: HttpUrl

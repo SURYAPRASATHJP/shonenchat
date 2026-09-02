@@ -3,9 +3,9 @@
 How ShonenChat works end to end. **Updated on the day the system changes, not weekly**,
 and every number in it says how it was measured.
 
-Started Day 2, 2026-09-02, when the system was one fetcher. It is kept from that day
-deliberately: the interesting part of this document by Day 40 will be how much of it was
-wrong on Day 2.
+Started 2026-09-02, when the system was one fetcher. It is kept from that point
+deliberately: the interesting part of this document later will be how much of it was
+wrong at the start.
 
 ## What the system is for
 
@@ -44,7 +44,7 @@ flowchart TD
 ## The trust boundary, and why it is one line
 
 `response.json()` is typed `Any`. `Any` means *stop checking*, and it is contagious: every
-value derived from it is unchecked too. Before Day 2 that hole ran unbroken from the socket
+value derived from it is unchecked too. Until the model landed, that hole ran unbroken from the socket
 to the file on disk, and a type checker would have reported nothing, because there was
 nothing to report — mypy reads code, and never sees a byte of data.
 
@@ -71,8 +71,8 @@ the answer is a `Document` or a raised `FetchError`.
 
 The `httpx.Client` is built in `cli.py` and passed into `Wiki`, not created inside it, so
 one connection is reused across every batch and `Wiki` can be tested against a fake
-transport with no network at all. That is what let the eight failure paths be proven on
-Day 2, three days before pytest arrives.
+transport with no network at all. That is what let the eight failure paths be proven from
+the start, before the test suite existed.
 
 ## Two decisions worth recording
 
@@ -80,8 +80,8 @@ Day 2, three days before pytest arrives.
 would mean nothing untyped ever leaves the client. It was rejected because the API page is
 wide, mostly unused, and Fandom can add keys at will, so it doubles the model surface for
 no extra guarantee at the point that matters, which is what lands on disk. It becomes the
-right answer when a second source with a different page shape arrives, which is the Day 38
-parse-routing problem.
+right answer when a second source with a different page shape arrives, which is the
+parse-routing problem for a later source.
 
 **`Document` carries its own schema version, and the reader enforces it.** `SCHEMA_VERSION`
 is stamped as the first key of every row rather than written once in a file header, so a
@@ -101,7 +101,7 @@ so ascending id is oldest first. Ids are not contiguous — deletion leaves perm
 and they are never reused — so the walk scans far wider than it keeps and reports
 `examined` and `requested_to` as two separate numbers.
 
-## Measured, Day 2, 2026-09-02
+## Measured, 2026-09-02
 
 One wiki, `onepiece.fandom.com`, walked from id 1 by
 `shonenchat fetch --limit 1000 --scan-ceiling 25000`.
@@ -122,7 +122,7 @@ One wiki, `onepiece.fandom.com`, walked from id 1 by
 | Empty articles | 0 | count of zero-length `wikitext` |
 
 The invariant `examined == len(documents) + sum(skipped.values())` holds:
-1,000 + 4,766 = 5,766. It is not yet a test. That is Day 3.
+1,000 + 4,766 = 5,766. It is not yet a test, only an observation.
 
 **Two things this table says that a single number would hide.**
 
@@ -144,7 +144,7 @@ Known and not fixed:
 
 - **Nothing rejects an empty article.** A page with empty wikitext validates fine and
   becomes a worthless corpus entry. It is a `rejection_reason` question and it is open.
-  Zero occurred in the Day 2 run of 1,000, so it is an unguarded risk rather than an
+  Zero occurred in the run of 1,000, so it is an unguarded risk rather than an
   observed fault.
 - **pydantic runs in lax mode**, so a `revid` arriving as the string `"99"` is silently
   converted to `99` rather than refused. `ConfigDict(strict=True)` is the switch. Left lax
@@ -155,7 +155,7 @@ Known and not fixed:
   constructor. If Fandom adds `lastrevid` tomorrow every fetch succeeds and nothing fires.
   The setting guards *our* mistakes, not theirs. Being liberal in what we accept is what
   stops a harmless key waking anyone at 3 a.m.; the cost is that a genuinely useful new key,
-  an `is_deleted` flag say, arrives unnoticed. Revisit Day 38.
+  an `is_deleted` flag say, arrives unnoticed. Revisit with an API-page model.
 - **`fetch_oldest` claims to return the oldest `limit` articles by ascending page id, and
   it cannot guarantee that.** MediaWiki does not document any ordering guarantee for the
   `pages` array. The early return fires mid-batch, so the articles kept from the final batch
@@ -166,9 +166,9 @@ Known and not fixed:
   probe settles it and it has not been run.
 - **Nothing checks that the API returned a page for every id requested.** `examined`
   increments per page *returned*, and no code asserts that equals the number of ids asked
-  for. The Day 3 invariant `examined == kept + sum(skipped)` proves the piles add up; it
+  for. The invariant `examined == kept + sum(skipped)` proves the piles add up; it
   cannot see a short response. Whether Fandom can return fewer pages than requested ids is
-  **unmeasured**, and that is the gap the Day 0 `scanned_to` bug lived in.
-- **No tests.** Day 3. `fetch_oldest` accepts a `client`, so every path above was proven
+  **unmeasured**, and that is the gap the earlier `scanned_to` bug lived in.
+- **No tests yet.** `fetch_oldest` accepts a `client`, so every path above was proven
   against `httpx.MockTransport` with no network, but proven in a throwaway script rather
   than a suite that reruns.

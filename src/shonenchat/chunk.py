@@ -1,7 +1,7 @@
 """Cut extracted prose into chunks that carry where they came from.
 
 A chunk is the unit everything downstream retrieves, embeds and scores, so
-two things matter about it from Day 3: it is a sensible size, and it knows
+two things matter about it: it is a sensible size, and it knows
 its source. A chunk that has lost its page id can be embedded but never
 cited, and an answer this project cannot cite is the one thing the whole
 product exists to avoid.
@@ -9,8 +9,8 @@ product exists to avoid.
 Size is counted in whitespace-separated words, not real tokens. A real
 tokeniser (tiktoken) counts what an embedding model actually sees, and a
 word is roughly 1.3 of those, so these counts are wrong by a predictable
-factor. That is a deliberate Day 3 shortcut: the dependency and the exact
-budget belong to Day 13 when the embedder is chosen. The word count is
+factor. That is a deliberate shortcut: the dependency and the exact
+budget are deferred until the embedder is chosen. The word count is
 consistent enough to group paragraphs sensibly today, which is all the
 chunker needs to do.
 
@@ -24,7 +24,7 @@ cut with an overlapping sliding window instead (see `_sliding_windows`), so
 every chunk still obeys the size contract and a sentence sitting on a cut
 still appears whole in one of the two chunks that share the overlap. The
 cost is that the overlapped words are embedded twice; the overlap size is a
-Day 13 tuning knob, measured against recall then, not guessed at now.
+tuning knob, measured against recall once the embedder lands, not now.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ DEFAULT_MIN_TOKENS = 300
 DEFAULT_MAX_TOKENS = 500
 # Words shared between two windows of an oversized paragraph. 10% of the
 # window. Small enough that the duplication cost is minor, large enough
-# that a cut sentence survives in one side. Tuned on Day 13 against recall.
+# that a cut sentence survives in one side. Tuned against recall later.
 DEFAULT_OVERLAP_TOKENS = 50
 
 _PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
@@ -112,13 +112,13 @@ def chunk_document(
     chunk per window, so the size contract holds even where no paragraph
     boundary does. Normal paragraph groups are NOT overlapped; they cut on
     real boundaries where overlap buys little, and general inter-chunk
-    overlap is a Day 13 decision.
+    overlap is a later decision.
     """
     # overlap must be a real fraction of the window. At overlap == max the
     # window would advance one word at a time (stride is floored at 1 to
     # stop an outright infinite loop), producing thousands of near-identical
     # windows: it terminates, but the output is garbage. Reject it here
-    # rather than let a bad config degrade silently. Found in Day 3 review.
+    # rather than let a bad config degrade silently. Found in review.
     if not 0 <= overlap_tokens < max_tokens:
         raise ValueError(
             f"overlap_tokens must be in [0, max_tokens); "

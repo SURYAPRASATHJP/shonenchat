@@ -305,7 +305,7 @@ def read_jsonl(path: Path) -> Iterator[Document]:
     Rows are yielded one at a time rather than returned as a list. The
     corpus is 65,002 pages and the largest article measured 122,962
     characters, so the whole file must never have to fit in memory at
-    once. The chunker on Day 3 consumes this.
+    once. The chunker consumes this.
 
     **A row with no `schema_version` key is read as version 1.** The
     1,000 documents already on disk were written before the field

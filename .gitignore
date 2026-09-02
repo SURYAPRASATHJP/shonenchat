@@ -9,3 +9,6 @@ data/
 .mypy_cache/
 .coverage
 htmlcov/
+
+# FUSE mount leaves these when a file is replaced while open
+.fuse_hidden*

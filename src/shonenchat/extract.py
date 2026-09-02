@@ -3,9 +3,9 @@
 This is the crude first pass, and it is meant to be. Wikitext is not a
 regular language and a regex stripper cannot parse it correctly; what it
 can do is remove the markup that would otherwise become noise in a chunk,
-well enough that the paragraphs underneath survive. Day 11 is where 200 of
-these outputs are read by hand and the specific things this gets wrong are
-written down. Until then, every shortcut here is deliberate and named.
+well enough that the paragraphs underneath survive. A later pass reads a
+sample of these outputs by hand and writes down the specific things this
+gets wrong. Until then, every shortcut here is deliberate and named.
 
 What it removes: templates, tables, HTML comments, ref tags, file and
 category links, and the wiki markup for links, bold and italic. What it

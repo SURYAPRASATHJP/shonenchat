@@ -7,7 +7,7 @@
 
 The product needs two things chosen together and it cannot change either one cheaply
 afterwards: a body of documents to index, and a named group of people to put it in front of
-on Day 19. A corpus with no reachable community produces a portfolio piece nobody uses. A
+at launch. A corpus with no reachable community produces something nobody uses. A
 community with no indexable corpus produces nothing to ship.
 
 Four tests, set before looking at any candidate:
@@ -106,7 +106,7 @@ retrieval possible along two axes, because `chap` and `ep` do not convert into o
 
 Rejected. It was the previous corpus and it was chosen for being easy to parse. No community
 was ever named for it, and test 1 was never tested: nobody was identified who searches
-arXiv abstracts today and finds the search bad. That is how a plan reaches Day 19 with
+arXiv abstracts today and finds the search bad. That is how a project reaches launch with
 nothing to send and nobody to send it to.
 
 ### r/selfhosted
@@ -151,12 +151,12 @@ of corpus size not being a score.**
   visible, user-facing hole from the first day it is public.
 - 28 wikis is 28 different templates, infobox conventions and editorial habits. One parser
   will not fit all of them.
-- The corpus measures at roughly 116,000 chunks, not a million, so the Day 33 to 37 scale
+- The corpus measures at roughly 116,000 chunks, not a million, so the scale
   work has to be honest about which figures are real and which come from a synthetic
   benchmark.
 - The two spoiler axes, `chap` and `ep`, do not convert, so spoiler bounding is a position
   with two coordinates rather than a toggle. **A refusal is itself a spoiler**, and this is
-  a post-retrieval filter, which is the Day 37 recall-collapse problem appearing inside my
+  a post-retrieval filter, which is the recall-collapse problem appearing inside my
   own product.
 
 ### Unmeasured, and it matters

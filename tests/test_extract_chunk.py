@@ -1,6 +1,6 @@
 """Parametrized tests for the extractor and the chunker.
 
-The edge cases are the ones Day 3 names: empty, one word, no paragraph
+The edge cases: empty, one word, no paragraph
 breaks, a paragraph far bigger than a chunk, and non-ASCII text (which for
 this corpus is not exotic, it is every character name). One of these finds
 a real bug in the crude chunker; the test that finds it is named in the
