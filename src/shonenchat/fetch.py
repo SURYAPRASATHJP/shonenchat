@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-import json
+import sys
 import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 import httpx
+from pydantic import ValidationError
+
+from shonenchat.models import Document
 
 USER_AGENT = "shonenchat/0.1 (+https://github.com/SURYAPRASATHJP/shonenchat)"
 
@@ -46,13 +50,13 @@ class FetchResult:
     """
 
     host: str
-    documents: list[dict]
+    documents: list[Document]
     skipped: Counter[str]
     examined: int
     requested_to: int
 
 
-def rejection_reason(page: dict) -> str | None:
+def rejection_reason(page: dict[str, Any]) -> str | None:
     """Why this page is not an article, or None if it is one.
 
     Four different things send a page id to the skip pile and they mean
@@ -93,11 +97,35 @@ class Wiki:
         self.api_url = f"https://{host}/api.php"
         self.client = client
 
-    def _get(self, params: dict[str, str]) -> dict:
-        """One API call, with every failure made loud."""
-        response = self.client.get(self.api_url, params=params)
-        response.raise_for_status()
-        payload = response.json()
+    def _get(self, params: dict[str, str]) -> dict[str, Any]:
+        """One API call, with every failure made loud.
+
+        Callers of this class handle `FetchError` and nothing else. If an
+        `httpx.TimeoutException` escapes from here, then every caller and
+        every test has to know which HTTP library is in use in order to
+        catch a fetch failing, which is exactly the coupling a custom
+        exception exists to prevent.
+
+        `httpx.HTTPError` is the base of the transport errors and of
+        `HTTPStatusError`, so one clause covers a timeout, a refused
+        connection, a DNS failure and a 503. `raise ... from error` keeps
+        the original traceback: the point is to relabel the failure, not
+        to hide what it was.
+        """
+        try:
+            response = self.client.get(self.api_url, params=params)
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            raise FetchError(f"{self.host}: request failed: {error}") from error
+
+        try:
+            payload: dict[str, Any] = response.json()
+        except ValueError as error:
+            # A proxy or a captive portal answers 200 with HTML. The
+            # status said success and the body is not JSON at all.
+            raise FetchError(
+                f"{self.host}: response was not JSON: {response.text[:200]!r}"
+            ) from error
 
         # A 200 with a warnings key is how MediaWiki reports an unsupported
         # parameter. Without this check a typo returns an empty result that
@@ -109,9 +137,9 @@ class Wiki:
 
         return payload
 
-    def fetch_pages(self, page_ids: list[int]) -> list[dict]:
+    def fetch_pages(self, page_ids: list[int]) -> list[dict[str, Any]]:
         """Ask for the wikitext of up to BATCH_SIZE pages by id."""
-        return self._get(
+        pages: list[dict[str, Any]] = self._get(
             {
                 "action": "query",
                 "format": "json",
@@ -126,34 +154,86 @@ class Wiki:
                 "rvprop": "content|ids",
             }
         )["query"]["pages"]
+        return pages
 
-    def to_document(self, page: dict) -> dict:
-        """Turn one API page into a document.
+    def to_document(self, page: dict[str, Any]) -> Document:
+        """Turn one API page into a `Document`. The gate.
+
+        Above this line the page is a `dict[str, Any]`, which is to say a
+        thing nothing has checked. Below it, a `Document` exists or an
+        exception was raised. There is no third outcome.
+
+        Two failures are possible here and they mean different things, so
+        they are caught separately rather than as one `except Exception`:
+
+        `KeyError` and friends mean the API's *shape* is not what we read
+        it to be. `revision["slots"]["main"]["content"]` is four subscripts
+        that all run before pydantic sees anything, and Fandom dropping
+        `content` would otherwise raise a bare `KeyError('content')` from
+        the middle of a fetch loop, naming neither the wiki nor the page.
+
+        `ValidationError` means the shape was right and a *value* was
+        rejected, e.g. a blank title. Same outcome, different cause, and a
+        run that fails at 3 a.m. should say which.
 
         Only call this on a page whose `rejection_reason` is None.
         """
-        revision = page["revisions"][0]
-        title = page["title"]
+        title = page.get("title")
 
-        return {
-            "page_id": page["pageid"],
-            "title": title,
-            # Which wiki this came from. Page ids are only unique within one
-            # wiki, so from 28 of them the id alone stops being an identity.
-            "wiki_host": self.host,
-            "revision_id": revision["revid"],
-            "wikitext": revision["slots"]["main"]["content"],
-            "url": f"https://{self.host}/wiki/{quote(title.replace(' ', '_'))}",
-            "fetched_at": datetime.now(UTC).isoformat(),
-        }
+        try:
+            revision = page["revisions"][0]
+            return Document(
+                page_id=page["pageid"],
+                title=page["title"],
+                wiki_host=self.host,
+                revision_id=revision["revid"],
+                wikitext=revision["slots"]["main"]["content"],
+                url=f"https://{self.host}/wiki/{quote(page['title'].replace(' ', '_'))}",
+                fetched_at=datetime.now(UTC),
+            )
+        except (KeyError, IndexError, TypeError) as error:
+            raise FetchError(
+                f"{self.host}: page {page.get('pageid')} ({title!r}) is not the "
+                f"shape this client expects: {error!r}"
+            ) from error
+        except ValidationError as error:
+            raise FetchError(
+                f"{self.host}: page {page.get('pageid')} ({title!r}) failed "
+                f"validation: {error}"
+            ) from error
 
     def fetch_oldest(
         self,
         limit: int = DEFAULT_LIMIT,
         scan_ceiling: int = DEFAULT_SCAN_CEILING,
+        progress: bool | None = None,
     ) -> FetchResult:
-        """Collect the oldest `limit` articles, by ascending page id."""
-        documents: list[dict] = []
+        """Collect the oldest `limit` articles, by ascending page id.
+
+        `progress` exists because the first real run of this function
+        printed nothing for twenty minutes. The code was correct and the
+        tool was unusable: a long silent process is indistinguishable from
+        a hung one, and the only way to find out was to kill it and lose
+        the work. Correct and unusable is still broken.
+
+        It is stderr, not stdout, so `... > out.txt` still captures only
+        the summary. It is `\r` with no newline, so it overwrites itself
+        rather than producing 400 lines of scrollback. `flush=True`
+        because stderr is line-buffered when attached to a terminal but
+        block-buffered when piped, and buffered progress output is no
+        progress output at all.
+
+        `progress=None` means "decide from the stream". Carriage returns
+        and the erase-line escape are terminal instructions; sent to a
+        pipe or a file they are literal bytes in the output. The first
+        version of this defaulted to True and wrote a stray `\033[K` into
+        captured output, which is the same class of mistake as the thing
+        it was added to fix: correct on the machine it was written on,
+        broken the moment anything else consumes it.
+        """
+        if progress is None:
+            progress = sys.stderr.isatty()
+        documents: list[Document] = []
         skipped: Counter[str] = Counter()
         examined = 0
 
@@ -171,13 +251,24 @@ class Wiki:
                     continue
                 documents.append(self.to_document(page))
                 if len(documents) == limit:
+                    if progress:
+                        print("\r\033[K", end="", file=sys.stderr, flush=True)
                     return FetchResult(
                         host=self.host,
-                        documents=sorted(documents, key=lambda d: d["page_id"]),
+                        documents=sorted(documents, key=lambda d: d.page_id),
                         skipped=skipped,
                         examined=examined,
                         requested_to=page_ids[-1],
                     )
+
+            if progress:
+                print(
+                    f"\r{self.host}: id {page_ids[-1]}/{scan_ceiling}  "
+                    f"kept {len(documents)}/{limit}  skipped {sum(skipped.values())}",
+                    end="",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
             time.sleep(DELAY_SECONDS)
 
@@ -187,8 +278,16 @@ class Wiki:
         )
 
 
-def write_jsonl(documents: list[dict], path: Path) -> None:
+def write_jsonl(documents: list[Document], path: Path) -> None:
+    """One `Document` per line, as JSON.
+
+    `model_dump_json` rather than `json.dumps(model_dump())`: the second
+    form returns a `datetime` object for `fetched_at` and an `HttpUrl` for
+    `url`, neither of which `json.dumps` can serialise. Going straight to
+    JSON is what converts them, and it writes UTF-8 rather than escaping
+    every non-ASCII character, which matters on a corpus full of them.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for document in documents:
-            handle.write(json.dumps(document, ensure_ascii=False) + "\n")
+            handle.write(document.model_dump_json() + "\n")

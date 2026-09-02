@@ -37,7 +37,7 @@ def fetch_command(args: argparse.Namespace) -> int:
     # guard is here anyway because both of those live somewhere else, and
     # the day fetch_oldest gains a partial-result path this line is a
     # ZeroDivisionError inside a summary print.
-    total = sum(len(document["wikitext"]) for document in result.documents)
+    total = sum(len(document.wikitext) for document in result.documents)
     mean = total // len(result.documents) if result.documents else 0
     print(
         f"{result.host}: examined {result.examined} pages "
@@ -102,4 +102,8 @@ def main() -> int:
     if args.command == "fetch" and args.limit < 1:
         parser.error("--limit must be at least 1")
 
-    return args.handler(args)
+    # argparse.Namespace.__getattr__ is typed Any, so `args.handler(args)`
+    # is Any and returning it directly is an unchecked claim that main()
+    # returns int. The annotated local is where the claim gets made.
+    exit_code: int = args.handler(args)
+    return exit_code

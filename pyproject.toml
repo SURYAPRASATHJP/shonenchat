@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "pydantic>=2.13.5",
     "httpx>=0.28.1",
 ]
 
@@ -20,6 +21,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "mypy",
     "ruff",
 ]
 
@@ -35,3 +37,19 @@ target-version = "py313"
 # SIM  simplify: collapses the needlessly long way of writing a thing.
 # RUF  ruff's own rules.
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.13"
+# pydantic's __init__ accepts what a field can be *validated from*, not
+# only what it is *stored as*: HttpUrl is built from a str. Plain mypy
+# reads the annotation and calls that a type error. The plugin teaches it
+# the difference. Without it the only fixes are wrapping every value at
+# the call site or weakening the field back to str, and both throw away
+# the guarantee to keep the checker quiet.
+plugins = ["pydantic.mypy"]
+files = ["src"]
+# strict is nine flags at once. The two that matter today:
+# disallow_untyped_defs, so an unannotated function cannot hide from the
+# checker, and disallow_any_generics, so a bare `dict` is an error rather
+# than silently meaning `dict[Any, Any]` and switching checking off.
+strict = true
