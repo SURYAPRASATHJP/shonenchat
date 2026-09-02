@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,7 +16,7 @@ from urllib.parse import quote
 import httpx
 from pydantic import ValidationError
 
-from shonenchat.models import Document
+from shonenchat.models import SCHEMA_VERSION, Document, SchemaVersionError
 
 USER_AGENT = "shonenchat/0.1 (+https://github.com/SURYAPRASATHJP/shonenchat)"
 
@@ -291,3 +293,55 @@ def write_jsonl(documents: list[Document], path: Path) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for document in documents:
             handle.write(document.model_dump_json() + "\n")
+
+
+def read_jsonl(path: Path) -> Iterator[Document]:
+    """Read documents back, refusing rows this code cannot honestly read.
+
+    A version stamped on write and never checked on read is decoration.
+    This is the check, and it is the only reason the field earns its
+    place on 1,000 lines.
+
+    Rows are yielded one at a time rather than returned as a list. The
+    corpus is 65,002 pages and the largest article measured 122,962
+    characters, so the whole file must never have to fit in memory at
+    once. The chunker on Day 3 consumes this.
+
+    **A row with no `schema_version` key is read as version 1.** The
+    1,000 documents already on disk were written before the field
+    existed, and adding an optional field is the one change that does
+    not alter what an old row means: every other field is byte for byte
+    what version 1 writes today. That is a deliberate decision and not a
+    default, and it is wrong for any future bump, where a missing key
+    would have to mean "unreadable".
+
+    Line number, not just path, in every error. A corpus file has
+    thousands of lines and "row 4,812" is a thing you can go and look at.
+    """
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+
+            try:
+                row: dict[str, Any] = json.loads(line)
+            except ValueError as error:
+                raise SchemaVersionError(
+                    f"{path}:{line_number}: not valid JSON: {error}"
+                ) from error
+
+            version = row.get("schema_version", 1)
+            if version != SCHEMA_VERSION:
+                raise SchemaVersionError(
+                    f"{path}:{line_number}: written by schema version "
+                    f"{version}, this code implements {SCHEMA_VERSION}. "
+                    f"Re-fetch the file or write a migration."
+                )
+
+            try:
+                yield Document.model_validate(row)
+            except ValidationError as error:
+                raise SchemaVersionError(
+                    f"{path}:{line_number}: row does not validate against "
+                    f"Document v{SCHEMA_VERSION}: {error}"
+                ) from error

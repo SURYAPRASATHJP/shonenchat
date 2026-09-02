@@ -24,7 +24,7 @@ flowchart TD
     end
 
     subgraph trusted["trusted, Document"]
-        DOC["Document<br/>pydantic, extra=forbid, frozen"]
+        DOC["Document<br/>pydantic, extra=forbid, frozen<br/>schema_version stamped"]
         JSONL["data/&lt;wiki&gt;.jsonl<br/>one Document per line"]
     end
 
@@ -37,6 +37,7 @@ flowchart TD
     GATE -->|"wrong shape or bad value"| ERR["FetchError<br/>names host and page id"]
     GATE --> DOC
     DOC --> JSONL
+    JSONL -->|"read_jsonl: refuses a row<br/>whose schema_version<br/>this code does not implement"| DOC
     JSONL -.->|"not built"| FUTURE["parse, chunk, embed,<br/>index, retrieve, answer"]
 ```
 
@@ -47,8 +48,12 @@ value derived from it is unchecked too. Before Day 2 that hole ran unbroken from
 to the file on disk, and a type checker would have reported nothing, because there was
 nothing to report — mypy reads code, and never sees a byte of data.
 
-`to_document()` is where that ends. Above it, a page is a `dict[str, Any]`. Below it, a
-`Document` exists or an exception was raised, with no third outcome. The checks are in one
+**There are two entrances, not one, and an earlier version of this section named only the
+first.** `to_document()` gates data arriving from the API. `read_jsonl()` gates data
+arriving from disk, via `Document.model_validate`, because a file written by an older
+version of this code is untrusted input exactly like a network response is. Both end the
+same way. Above them a row is a `dict[str, Any]`; below them a `Document` exists or an
+exception was raised, with no third outcome. The checks are in one
 place rather than scattered as `if "content" in page` through the codebase.
 
 **A filter and a gate are different jobs and this codebase keeps them apart.**
@@ -61,7 +66,7 @@ the answer is a `Document` or a raised `FetchError`.
 | Module | Owns | Deliberately does not |
 |---|---|---|
 | `cli.py` | Argument parsing, the `httpx.Client` lifetime, the run summary | Know anything about MediaWiki |
-| `fetch.py` | One wiki, its API contract, the skip taxonomy, id walking | Decide where files go, or what a document means |
+| `fetch.py` | One wiki, its API contract, the skip taxonomy, id walking, and reading rows back | Decide where files go, or what a document means |
 | `models.py` | The shape of a `Document`, and every runtime guarantee about it | Touch the network, or know MediaWiki exists |
 
 The `httpx.Client` is built in `cli.py` and passed into `Wiki`, not created inside it, so
@@ -77,6 +82,19 @@ wide, mostly unused, and Fandom can add keys at will, so it doubles the model su
 no extra guarantee at the point that matters, which is what lands on disk. It becomes the
 right answer when a second source with a different page shape arrives, which is the Day 38
 parse-routing problem.
+
+**`Document` carries its own schema version, and the reader enforces it.** `SCHEMA_VERSION`
+is stamped as the first key of every row rather than written once in a file header, so a
+row stays self-describing after it leaves its file and two runs can still be joined with
+`cat`. It is a field default and never a call-site argument, so no code path can stamp a
+row with a version other than the one it implements. `read_jsonl` refuses any row it does
+not implement, naming file and line, because a version written and never checked is
+decoration. **A row with no `schema_version` key is read as version 1**: the 1,000 rows
+already on disk predate the field, and adding an optional field is the one change that
+leaves what an old row *means* untouched. That reasoning is correct for this bump and wrong
+for every future one.
+
+**This versions our model, not Fandom's API.** See the drift note below.
 
 **Page ids are walked ascending, not enumerated.** MediaWiki assigns ids in creation order,
 so ascending id is oldest first. Ids are not contiguous — deletion leaves permanent holes
@@ -131,6 +149,26 @@ Known and not fixed:
 - **pydantic runs in lax mode**, so a `revid` arriving as the string `"99"` is silently
   converted to `99` rather than refused. `ConfigDict(strict=True)` is the switch. Left lax
   on purpose, recorded here so it is a decision and not an accident.
+- **Upstream drift is unguarded, and an earlier version of this document implied
+  otherwise.** `extra="forbid"` on `Document` cannot see a new Fandom key, because
+  `to_document` plucks seven named fields by hand and the payload never passes through the
+  constructor. If Fandom adds `lastrevid` tomorrow every fetch succeeds and nothing fires.
+  The setting guards *our* mistakes, not theirs. Being liberal in what we accept is what
+  stops a harmless key waking anyone at 3 a.m.; the cost is that a genuinely useful new key,
+  an `is_deleted` flag say, arrives unnoticed. Revisit Day 38.
+- **`fetch_oldest` claims to return the oldest `limit` articles by ascending page id, and
+  it cannot guarantee that.** MediaWiki does not document any ordering guarantee for the
+  `pages` array. The early return fires mid-batch, so the articles kept from the final batch
+  are the first ones *in response order*, not the lowest ids in it. `sorted()` at the return
+  orders the output and cannot change which documents were selected. The error is bounded by
+  `BATCH_SIZE`, so at most 49 ids of slop at the boundary, and the claim in the docstring is
+  unqualified. **Unmeasured:** whether Fandom in fact returns pages in requested order. One
+  probe settles it and it has not been run.
+- **Nothing checks that the API returned a page for every id requested.** `examined`
+  increments per page *returned*, and no code asserts that equals the number of ids asked
+  for. The Day 3 invariant `examined == kept + sum(skipped)` proves the piles add up; it
+  cannot see a short response. Whether Fandom can return fewer pages than requested ids is
+  **unmeasured**, and that is the gap the Day 0 `scanned_to` bug lived in.
 - **No tests.** Day 3. `fetch_oldest` accepts a `client`, so every path above was proven
   against `httpx.MockTransport` with no network, but proven in a throwaway script rather
   than a suite that reruns.

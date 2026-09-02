@@ -16,15 +16,41 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
+# Bump this whenever a change to `Document` makes an already-written row
+# mean something different: a field removed, renamed, retyped, or given
+# a new meaning. Do NOT bump it for a new optional field, because an old
+# row is still a correct row under the new model.
+#
+# The number is on every row rather than in a file header. A header
+# would be read once and would break the one-Document-per-line contract
+# that lets two runs be concatenated with `cat`, and a row that leaves
+# its file stops being self-describing the moment it does.
+SCHEMA_VERSION = 1
+
+
+class SchemaVersionError(RuntimeError):
+    """A stored row was written by a different version of `Document`."""
+
 
 class Document(BaseModel):
     """One wiki article, as this project stores it.
 
-    `extra="forbid"` because every field is passed by hand from a known
-    API shape. The default, silently dropping unknown keys, is right at a
-    boundary where the sender owns the schema. It is wrong here: a key
-    arriving that we did not model means our reading of the API changed
-    under us, and that should be loud.
+    `extra="forbid"` guards the *internal* boundary, not the external one.
+    Nothing from Fandom can reach this constructor: `to_document` plucks
+    seven named fields by hand and the payload never passes through. If
+    Fandom adds `lastrevid` tomorrow, every fetch still succeeds and this
+    setting never fires. **It is not upstream-drift detection and an
+    earlier version of this docstring claimed it was.**
+
+    What it does catch is us. The day someone passes `Document(...,
+    is_locked=True)` without declaring `is_locked` here, the mismatch is
+    an error instead of a silently dropped field.
+
+    Upstream drift is therefore *unguarded*, deliberately and for now.
+    Being liberal in what we accept is what stops a harmless new key
+    waking anyone at 3 a.m.; the cost is that a genuinely useful new key,
+    an `is_deleted` flag say, arrives and we never notice the API just
+    offered us a filter. Revisit on Day 38 with the API-page model.
 
     `frozen=True` because a document is a record of what a wiki returned
     at `fetched_at`. Mutating one after the fact makes the timestamp a
@@ -32,6 +58,15 @@ class Document(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # First field so it is the first key on every line and `head -c 30`
+    # on the file answers "what wrote this".
+    #
+    # A default, not a required argument: `to_document` must not be able
+    # to stamp a row with a version other than the one the running code
+    # implements, and passing it by hand at the call site is exactly how
+    # that happens.
+    schema_version: int = Field(default=SCHEMA_VERSION, gt=0)
 
     # gt=0 rather than plain int: MediaWiki page and revision ids start at
     # 1, so 0 or a negative is a parsing mistake on our side, not data.
