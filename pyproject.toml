@@ -12,8 +12,26 @@ dependencies = [
 ]
 
 [project.scripts]
-shonenchat = "shonenchat:main"
+shonenchat = "shonenchat.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+# E,F  pycodestyle and pyflakes: the errors that are actually errors.
+# I    import sorting, so a diff never contains a reordered import block.
+# UP   pyupgrade: flags 3.8-era syntax we have no reason to write on 3.13.
+# B    bugbear: real bug shapes, e.g. a mutable default argument.
+# SIM  simplify: collapses the needlessly long way of writing a thing.
+# RUF  ruff's own rules.
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
