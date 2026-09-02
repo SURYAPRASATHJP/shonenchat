@@ -1,0 +1,157 @@
+"""Parametrized tests for the extractor and the chunker.
+
+The edge cases are the ones Day 3 names: empty, one word, no paragraph
+breaks, a paragraph far bigger than a chunk, and non-ASCII text (which for
+this corpus is not exotic, it is every character name). One of these finds
+a real bug in the crude chunker; the test that finds it is named in the
+day's log.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from shonenchat.chunk import (
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_OVERLAP_TOKENS,
+    Chunk,
+    chunk_document,
+    count_tokens,
+)
+from shonenchat.extract import extract_text
+
+# --- extractor ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "wikitext,expected",
+    [
+        ("", ""),
+        ("Plain sentence.", "Plain sentence."),
+        ("A {{infobox|a=1}}real article.", "A real article."),
+        ("See [[Monkey D. Luffy]] now.", "See Monkey D. Luffy now."),
+        ("See [[Monkey D. Luffy|Luffy]] now.", "See Luffy now."),
+        ("[[Category:Pirates]]\nStraw Hats.", "Straw Hats."),
+        ("[[File:Luffy.png|thumb]]\nText.", "Text."),
+        ("'''Luffy''' is a ''pirate''.", "Luffy is a pirate."),
+        ("Text<ref>a citation</ref> more.", "Text more."),
+    ],
+)
+def test_extract_reduces_markup_to_prose(wikitext: str, expected: str) -> None:
+    assert extract_text(wikitext) == expected
+
+
+def test_extract_preserves_unicode() -> None:
+    """Character names are Japanese as often as not. Dropping non-ASCII
+    would silently corrupt a large share of the corpus.
+    """
+    text = "モンキー・D・ルフィ is 海賊."
+    assert extract_text(text) == "モンキー・D・ルフィ is 海賊."
+
+
+def test_extract_keeps_paragraph_breaks() -> None:
+    """The blank line is the only thing the chunker can cut on, so the
+    extractor must not collapse it away.
+    """
+    out = extract_text("First para.\n\nSecond para.")
+    assert out == "First para.\n\nSecond para."
+
+
+# --- chunker -----------------------------------------------------------
+
+
+def test_empty_text_yields_no_chunks() -> None:
+    assert chunk_document("", page_id=1, wiki_host="h") == []
+
+
+def test_one_word_yields_one_chunk() -> None:
+    chunks = chunk_document("word", page_id=1, wiki_host="h")
+    assert len(chunks) == 1
+    assert chunks[0].token_count == 1
+    assert chunks[0].text == "word"
+
+
+def test_no_paragraph_breaks_is_a_single_chunk() -> None:
+    chunks = chunk_document("one line no breaks here", page_id=1, wiki_host="h")
+    assert len(chunks) == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "short",
+        "para one\n\npara two\n\npara three",
+        "\n\n".join(["word " * 50] * 20),  # many normal paragraphs
+    ],
+    ids=["short", "three-paras", "many-paras"],
+)
+def test_every_chunk_carries_its_source(text: str) -> None:
+    chunks = chunk_document(text, page_id=42, wiki_host="onepiece.fandom.com")
+    assert chunks, "expected at least one chunk"
+    assert all(c.page_id == 42 for c in chunks)
+    assert all(c.wiki_host == "onepiece.fandom.com" for c in chunks)
+    # index is 0..n-1 with no gaps, so a document can be reassembled.
+    assert [c.index for c in chunks] == list(range(len(chunks)))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "short",
+        "\n\n".join(["word " * 100] * 10),  # ten 100-word paragraphs
+        "word " * 10000,  # one 10,000-word paragraph, no boundary to cut
+    ],
+    ids=["short", "ten-paras", "giant-single-paragraph"],
+)
+def test_no_chunk_exceeds_the_max(text: str) -> None:
+    """The contract the chunker names: no chunk larger than max_tokens.
+
+    The giant-single-paragraph case is the one that first broke this: a
+    10,000-word paragraph has no boundary to cut on, so the crude chunker
+    emitted it as one 10,000-token chunk. It is now split with an
+    overlapping sliding window, so every chunk obeys the contract even
+    where no paragraph boundary exists. This asserts that holds.
+    """
+    for c in chunk_document(text, page_id=1, wiki_host="h"):
+        assert c.token_count <= DEFAULT_MAX_TOKENS
+
+
+def test_count_tokens_is_whitespace_words() -> None:
+    assert count_tokens("a b  c\nd") == 4
+    assert count_tokens("") == 0
+
+
+def test_chunk_is_frozen() -> None:
+    """A chunk records how a document was cut; mutating it makes the
+    record a lie, the same reason Document is frozen.
+    """
+    chunk = Chunk(page_id=1, wiki_host="h", index=0, text="x", token_count=1)
+    with pytest.raises((AttributeError, TypeError)):
+        chunk.index = 5  # type: ignore[misc]
+
+
+def test_oversized_paragraph_is_windowed_with_overlap() -> None:
+    """A paragraph past max_tokens is cut into overlapping windows.
+
+    Every window obeys the size contract, and consecutive windows share
+    exactly overlap_tokens words, so a sentence sitting on a cut survives
+    whole in one of them. This is the behaviour the sliding-window fix
+    exists for; without the overlap assertion a plain hard split would
+    also pass, and the two are not the same chunker.
+    """
+    chunks = chunk_document("word " * 2000, page_id=1, wiki_host="h")
+    assert len(chunks) > 1
+    assert all(c.token_count <= DEFAULT_MAX_TOKENS for c in chunks)
+    first_words = chunks[0].text.split()
+    second_words = chunks[1].text.split()
+    assert first_words[-DEFAULT_OVERLAP_TOKENS:] == second_words[:DEFAULT_OVERLAP_TOKENS]
+
+
+def test_overlap_at_or_above_window_is_rejected() -> None:
+    """An overlap >= the window degrades into thousands of near-identical
+    windows. It is rejected at the door, not left to run.
+    """
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="overlap_tokens"):
+        chunk_document("word " * 10, page_id=1, wiki_host="h", max_tokens=5, overlap_tokens=5)
